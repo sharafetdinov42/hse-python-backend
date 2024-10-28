@@ -5,6 +5,8 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+    paths:
+      - 'hw_*/**'  # Указывает на любые ветки, начинающиеся с hw_
 
 jobs:
   build:
