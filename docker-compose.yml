@@ -1,0 +1,39 @@
+services:
+  fastapi:
+    build: .
+    container_name: shop_api
+    ports:
+      - "8001:8001"
+    networks:
+      - monitor-net
+    labels:
+      - "monitoring=enabled"
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "5002:9090"
+    networks:
+      - monitor-net
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "5003:3000"
+    networks:
+      - monitor-net
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+networks:
+  monitor-net:
+    driver: bridge
+
+volumes:
+  grafana_data:
