@@ -1,7 +1,17 @@
+from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Body, FastAPI, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Query, Request, Response, status
+from prometheus_client import Counter, Histogram, generate_latest, start_http_server
 from pydantic import BaseModel
+
+# Metrics
+REQUEST_COUNT = Counter("request_count", "Total number of requests", ["method", "endpoint"])
+SUCCESSFUL_REQUEST_COUNT = Counter("successful_requests", "Total number of successful requests", ["method", "endpoint"])
+ITEMS_CREATED_COUNT = Counter("items_created", "Total number of items created")
+ITEMS_DELETED_COUNT = Counter("items_deleted", "Total number of items deleted")
+CART_OPERATIONS_COUNT = Counter("cart_operations", "Total number of cart operations", ["operation"])
+REQUEST_LATENCY = Histogram("request_latency_seconds", "Request latency in seconds")
 
 
 class ItemCreate(BaseModel):
@@ -83,6 +93,7 @@ def create_item(item: ItemCreate, response: Response):
     new_item_id = item_counter
     new_item = Item(id=new_item_id, name=item.name, price=item.price, deleted=False)
     item_database[new_item_id] = new_item
+    ITEMS_CREATED_COUNT.inc()
     response.headers["location"] = f"/item/{new_item_id}"
     return new_item.model_dump()
 
@@ -210,6 +221,7 @@ def delete_item(item_id: int):
     if existing_item.deleted:
         return {"message": "The item has already been deleted"}
     existing_item.deleted = True
+    ITEMS_DELETED_COUNT.inc()
     return {"message": "Item has been successfully deleted"}
 
 
@@ -348,6 +360,7 @@ def add_item_to_cart(cart_id: int, item_id: int):
 
     cart = cart_database[cart_id]
     item = item_database[item_id]
+    CART_OPERATIONS_COUNT.labels(operation="add").inc()
     for cart_item in cart.items:
         if cart_item.id == item_id:
             cart_item.quantity += 1
@@ -361,3 +374,30 @@ def add_item_to_cart(cart_id: int, item_id: int):
 # Add routers to the app
 app.include_router(item_router)
 app.include_router(cart_router)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_http_server(8001)
+    yield
+
+
+@app.middleware("http")
+async def add_prometheus_metrics(request: Request, call_next):
+    endpoint = request.url.path
+    method = request.method
+
+    REQUEST_COUNT.labels(method=method, endpoint=endpoint).inc()
+
+    try:
+        response = await call_next(request)
+        if response.status_code < 400:
+            SUCCESSFUL_REQUEST_COUNT.labels(method=method, endpoint=endpoint).inc()
+        return response
+    except HTTPException as http_exc:
+        raise http_exc
+
+
+@app.get("/metrics")
+async def get_metrics():
+    return Response(generate_latest(), media_type="text/plain")
